@@ -53,7 +53,7 @@ shakespeare-char
 
 There are three model definitions here.
 
-* `shakepeare` trains a model on the text of all of Shakespeare's plays tokenized with the
+* `shakespeare` trains a model on the text of all of Shakespeare's plays tokenized with the
   [tiktoken](https://github.com/openai/tiktoken) tokenizer from OpenAI, which
   has a pre-built vocabulary of around 50,000 tokens.  The model trained will
   have a context window of 1024 tokens, 12 layers with 12 self-attention heads
@@ -85,7 +85,7 @@ One thing you may want to set specifically is the `DEVICE`:
 Realistically, training either `shakespeare` or `openwebtext` on your commodity
 computer will take days upon days.  Andrej Karpathy said that the `openwebtext`
 training took around 4 days distributed across 8 nVidia A100s, which is way, way
-more powerful than anything us mortals have access to.
+more powerful than anything we mortals have access to.
 
 `shakespeare-char` is much more manageable and can be trained on commodity
 hardware in about few hours or so, so we'll train that one.
@@ -93,7 +93,7 @@ hardware in about few hours or so, so we'll train that one.
 ### Dataset tokenization and splitting
 
 We ship with the Shakespeare dataset pre-downloaded.  It needs to be tokenized
-and split into training and validation datasets.  We do this with `munckin data prepare`.
+and split into training and validation datasets.  We do this with `munchkin data prepare`.
 
 ```bash
 $ munchkin data prepare shakepeare_char
@@ -109,7 +109,7 @@ Once this finishes, you should see these files:
 
 ```
 etc/shakespeare/train.bin
-etc/shakespear/val.bin
+etc/shakespeare/val.bin
 ```
 
 ### Training shakespeare-char
@@ -199,11 +199,11 @@ Iter 1580: loss=1.3255, elapsed=1250.08 per_iter=0.47s, mfu 0.76%  lr=8.12e-04
 ```
 
 This names the iteration number, the value of the loss function (`loss`), total
-elapsed time since the start of training in seconds (`elapsed`), the how long
+elapsed time since the start of training in seconds (`elapsed`), how long
 it's taking for each iteration in seconds (`per_iter`), model FLOPS (floating
 point operations per second) as a percentage of peak FLOPS for an nVidia A100
 when using bfloat16 parameters (`mfu`), and the current value of the learning
-rate `lr`).
+rate `lr`).  On my `mps` device, I get about 0.8% of A100 peak FLOPS. Woohoo!!
 
 As you watch the training, you should see the `loss` generally decrease towards
 zero, and the `lr` decay (this is normal) and hopefully your `per_iter` stays
@@ -225,8 +225,7 @@ If you see a few validation tests that log in red and don't produce a checkpoint
 file, you can stop the training -- the model is becoming overfit and won't get better.
 
 When I train `shakespeare-char`, I bottom out generally at a valiation loss of
-1.5 or so.
-
+1.5 or so at around iteration 3000.
 
 ### Generate some text!
 
