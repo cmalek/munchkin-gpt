@@ -1,6 +1,7 @@
 from functools import cached_property
 from pathlib import Path
 import pickle
+import random
 from typing import Any, Literal, Tuple, Optional, List, Dict, cast, Type, Set
 
 from datasets import load_dataset
@@ -30,7 +31,7 @@ class CharTokenizer:
         #: The vocabulary
         self.vocab: Optional[Dict[str, int]] = None
         #: The inverse vocabulary
-        self.inverse_vocab: Optional[Set[str]] = None
+        self.inverse_vocab: Optional[Dict[int, str]] = None
 
     def build_vocabulary(self, corpus: str) -> None:
         """
@@ -427,6 +428,12 @@ class Dataset:
         #: disk if it hasn't already been done.
         self.loader = self.LOADERS[settings.dataset](settings, **settings.dataset_loader_kwargs)
         self.loader.load()
+        #: The batches of data
+        self.batches: Dict[str, Dict[int, Tuple[torch.Tensor, torch.Tensor]]] = {}
+        #: The order of the batches
+        self.batch_order: Dict[str, List[int]] = {}
+        #: The current index into the batch order
+        self.index: Dict[str, int] = {}
 
     @property
     def data(self) -> Any:
@@ -442,6 +449,42 @@ class Dataset:
         """
         return self.loader.vocab_size
 
+    def chunk(
+        self,
+        split: Literal['train', 'val'],
+        block_size: int
+    ) -> Dict[int, Tuple[torch.Tensor, torch.Tensor]]:
+        """
+        Split numpy array data into non-intersecting pairs of batches of size
+        batch_size, where the second batch in the pair starts one index after
+        the start of the first batch.  If the last pair has a batch of length
+        less than batch_size, it won't be added.
+
+        Args:
+            split: The dataset split to build the batches from.  Must be either ``train``
+                or ``val``.
+            block_size: The size of the input sequence
+        """
+        data = self.data[split]
+        # Split data into batches
+        pairs: Dict[int, Tuple[torch.Tensor, torch.Tensor]] = {}
+        i = 0
+        blocks = 0
+        while i + block_size < len(data):
+            first_batch = torch.from_numpy((data[i:i + block_size]).astype(np.int64))
+            second_batch = torch.from_numpy((data[i + 1:i + 1 + block_size]).astype(np.int64))
+            pairs[blocks] = (first_batch, second_batch)
+            i += block_size
+            blocks += 1
+
+        # If the last pair has a batch of length less than batch_size, remove it
+        if (
+            len(pairs) and
+            (len(pairs[blocks - 1][0]) < block_size or len(pairs[blocks - 1][1]) < block_size)
+        ):
+            del pairs[blocks - 1]
+        return pairs
+
     def get_batch(
         self,
         split: Literal['train', 'val'],
@@ -456,35 +499,41 @@ class Dataset:
         Args:
             split: The dataset split to get the batch from.  Must be either ``train``
                 or ``val``.
-            block_size: The size of the input sequence
-            batch_size: The number of sequences in the batch
+            settings: The training settings
 
         Returns:
             A tuple of two tensors: the input sequence and the next word after
             each input sequence.
-        """
-        data = self.data[split]
-        # Get a vector of random indices into the data, length
-        # :py:attr:`nanoGPT.settings.TrainingSettings.batch_size`
-        _idx = torch.randint(
-            len(data) - settings.block_size,
-            (settings.batch_size,)
-        )
-        # This is the input sequence for each batch element
-        input = torch.stack(
-            [
-                torch.from_numpy((data[i:i + settings.block_size]).astype(np.int64))
-                for i in _idx
-            ]
-        )
-        # This is the next word after each sequence in ``input``
-        targets = torch.stack(
-            [
-                torch.from_numpy((data[i + 1:i + 1 + settings.block_size]).astype(np.int64))
-                for i in _idx
-            ]
 
-        )
+        """
+        if split not in self.batches:
+            self.batches[split] = self.chunk(split, settings.block_size)
+            self.batch_order[split] = list(self.batches[split].keys())
+            random.shuffle(self.batch_order[split])
+            self.index[split] = 0
+        start = self.index[split]
+        if start == len(self.batch_order[split]) - 1:
+            # We are literally at the last chunk, so we need to wrap around
+            start = 0
+        end = start + settings.batch_size
+        remainder = 0
+        if end > len(self.batch_order[split]) - 1:
+            end = len(self.batch_order[split]) - 1
+            if end - start < settings.batch_size:
+                remainder = settings.batch_size - (end - start)
+        _idx = range(start, end)
+        # This is the input sequence for each batch element
+        input = torch.stack([self.batches[split][i][0] for i in _idx])
+        # This is the next word after each sequence in ``input``
+        targets = torch.stack([self.batches[split][i][1] for i in _idx])
+        if remainder:
+            # We've reached the end of the dataset, so we need to wrap around
+            self.index[split] = 0
+            end = remainder
+            _idx = range(self.index[split], self.index[split] + remainder)
+            input = torch.cat([input, torch.stack([self.batches[split][i][0] for i in _idx])])
+            targets = torch.cat([targets, torch.stack([self.batches[split][i][1] for i in _idx])])
+        self.index[split] = end
         if settings.device_type == 'cuda':
             # Pin arrays x, y which allows us to move them to the GPU
             # asynchroously (non_blocking=True)

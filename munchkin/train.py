@@ -78,7 +78,8 @@ class OptimizerFactory:
 
 class GPTEvaluator:
     """
-    A class that evaluates a GPT model.
+    A class that evaluates a GPT model.  We use this to monitor how our model
+    training is going.
 
     To use:
 
@@ -122,7 +123,7 @@ class GPTEvaluator:
         )
         if self.settings.compile:
             # compile the model, if desired
-            model = torch.compile(model)  # type: ignore
+            model = torch.compile(model, backend='aot_eager')  # type: ignore
         return model
 
     def setup(self) -> None:
@@ -244,10 +245,11 @@ class GPTTrainer(GPTEvaluator):
             info['Checkpoint file'] = self.settings.checkpoint_path
             os.makedirs(self.settings.out_dir, exist_ok=True)
 
-        pprint_dict(info, title='Training Setup', align=30)
-
         # Set up the model
         self.model  # pylint: disable=pointless-statement
+        info['GPT parameters'] = self.model.get_num_params()
+
+        pprint_dict(info, title='Training Setup', align=30)
         # Set up the optimizer
         self.optimizer  # pylint: disable=pointless-statement
         # Set up the scaler
@@ -402,7 +404,7 @@ class GPTTrainer(GPTEvaluator):
                 )
                 self.mfu = mfu if self.mfu == -1.0 else 0.9 * self.mfu + 0.1 * mfu
                 click.secho(
-                    f"Iter {self.iter_num}: loss={lossf:.4f}, elapsed={elapsed:.2f} deltaT={deltaT:.2f}s, "
+                    f"Iter {self.iter_num}: loss={lossf:.4f}, elapsed={elapsed:.2f} per_iter={deltaT:.2f}s, "
                     f"mfu {self.mfu * 100:.2f}%  lr={self.learning_rate:.2e}",
                 )
 
@@ -413,7 +415,7 @@ class GPTTrainer(GPTEvaluator):
         self.setup()
         click.secho('\n\nTraining', fg='yellow')
         click.secho('========', fg='yellow')
-        input, targets = self.dataset.get_batch("train", self.settings)
+        _input, targets = self.dataset.get_batch("train", self.settings)
         t_start = time.time()
         t0 = t_start
         while self.iter_num <= self.settings.max_iters:
@@ -427,8 +429,8 @@ class GPTTrainer(GPTEvaluator):
                 break
             for micro_step in range(self.settings.gradient_accumulation_steps):
                 if self.settings.ddp:
-                    # In DDP training, we only need to sync gradients at the last
-                    # micro step.  The official way to do this is with
+                    # In DDP training, we only need to sync gradients at the
+                    # last micro step.  The official way to do this is with
                     # model.no_sync() context manager, but I really dislike that
                     # this bloats the code and forces us to repeat code looking
                     # at the source of that context manager, it just toggles
@@ -437,11 +439,11 @@ class GPTTrainer(GPTEvaluator):
                     if micro_step == self.settings.gradient_accumulation_steps - 1:
                         self.model.require_backward_grad_sync = True  # type: ignore
                 with self.settings.context:
-                    _, loss = self.model(input, targets)
+                    _, loss = self.model(_input, targets)
                     # scale the loss to account for gradient accumulation
                     loss = loss / self.settings.gradient_accumulation_steps
                 # immediately async prefetch next batch while model is doing the forward pass on the GPU
-                input, targets = self.dataset.get_batch("train", self.settings)
+                _input, targets = self.dataset.get_batch("train", self.settings)
                 # backward pass, with gradient scaling if training in fp16
                 self.scaler.scale(loss).backward()
 

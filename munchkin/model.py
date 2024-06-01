@@ -26,7 +26,6 @@ from .settings import InferenceSettings
 from .utils import pprint_dict
 
 
-
 @dataclass
 class GPTConfig:
     """

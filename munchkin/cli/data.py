@@ -26,9 +26,8 @@ def data_list_datasets() -> None:
     """
     click.secho('Available dataset configs', fg='green')
     click.secho('==========================\n', fg='green')
-    for config in Path(__file__).parent.parent.parent.glob('etc/dataset/*.env'):
-        name = str(config.name).replace('.env', '')
-        print(f'{name}')
+    for dataset in Path(__file__).parent.parent.parent.glob('etc/dataset/*'):
+        print(dataset.name)
 
 
 @data_group.command('process', short_help="Pre-process a dataset")

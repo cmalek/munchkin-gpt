@@ -1,6 +1,7 @@
 torch
 numpy
 transformers
+accelerate
 datasets
 tiktoken
 wandb
